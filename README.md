@@ -1,6 +1,8 @@
 voorhees 0.1
 ============
 
+### Stand-alone JSON feed generator for feed-only blogging
+
 October 25, 2026
 
 Run the install script. It will check if uuid and sqlite3 is installed.  It will also attempt to copy voorhees to the first writable directory it can find in your path.  If the location isn't acceptable, or it fails to find the path, move voorhees to wherever your prefer.

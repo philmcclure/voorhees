@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+
+### VARS ###
+SRC="${HOME}/.config/voorhees"
+CONFIG="${SRC}/config"
+TEMPLATES="${SRC}/templates"
+DATABASE="${SRC}/posts.db"
+
+### COLORS ###
+RED_BOLD="\e[1;31m"
+BOLD="\e[1m"
+CLEAR="\e[0m"
+
+### CHECK FOR REQUIREMENTS ###
+
+if ! command -v sqlite3 >/dev/null 2>&1; then
+    MISSING="sqlite3"
+fi
+
+if [ -f "/proc/sys/kernel/random/uuid" ]; then
+    UUID_CMD='cat /proc/sys/kernel/random/uuid'
+elif UUID=$(command -v uuidgen); then
+    UUID_CMD=$(which uuidgen)
+elif UUID=$(command -v uuid); then
+    UUID_CMD=$(which uuid)
+else
+    MISSING+=", uuid"
+fi
+
+if [ "$MISSING" != "" ];then
+    echo -e "${RED_BOLD}Missing dependencies. Install aborted.${CLEAR}"
+    echo
+    echo -e "Install ${BOLD}${MISSING}${CLEAR} and re-run script."
+    exit
+fi
+
+### CONFIG ###
+sample_conf=$(cat<<-'conf_EOF'
+### vorhees ###
+TITLE="Sitename"
+HOME_PAGE_URL="http(s)://sitename.tld"
+DESCRIPTION="A brief description of the purpose of this feed"
+FEED_OUT=""   #Leave empty to output to STDOUT
+POST_COUNT="0" #Number of posts to include in feed. '0' for all
+EDITOR="/usr/bin/vi" #Change to your preferred text editor
+MARKDOWN="/usr/bin/markdown" #Too many to check, specify your flavor here
+conf_EOF
+)
+
+### TEMPLATES ###
+header_template=$(cat<<-'ht_EOF'
+HEADER=$(cat<<EOF
+{
+    "version": "https://jsonfeed.org/version/1.1",
+    "title": "${TITLE}",
+    "description": "${DESCRIPTION}",
+    "home_page_url": "${HOME_PAGE_URL}",
+    "feed_url": "${HOME_PAGE_URL}/feed.json",
+    "items": [
+EOF
+)
+ht_EOF
+)
+
+item_template=$(cat<<-'item_EOF'
+ITEM=$(cat<<EOF
+    {
+        "id": "${ITEM_UUID}",
+        "title": "${ITEM_TITLE}",
+        "content_html": "${CONTENT_HTML}",
+        "date_published": "${DATE_PUBLISHED}"
+    }
+EOF
+)
+item_EOF
+)
+
+install_voorhees(){
+path_array=( $(echo $PATH | sed 's/:/\ /g') )
+path_count=${#path_array[@]}
+install_path=""
+x=0
+
+# Search for writable path. When you find one, stick that directory in a variable
+while [ $x -lt $path_count ]; do
+    p2check="${path_array[${x}]}"
+    if [ -w $p2check ]; then
+        install_path="${path_array[${x}]}"
+	break
+    fi
+    x=$(( x+1 ))
+done
+
+if [ -z "$install_path" ]; then
+    echo "You need to manually copy voorhees to somewhere in your PATH."
+else
+    cp voorhees ${install_path}
+    chmod 755 ${install_path}/voorhees
+    echo "voorhees successfully installed at ${install_path}/voorhees"
+fi
+}
+    
+
+### INSTALL ###
+if [ ! -d "$SRC" ]; then
+    echo "Dependencies met."
+    echo "Creating config directory - ${SRC}"
+    mkdir -p "${SRC}" "${TEMPLATES}"
+    echo "Generating config"
+    echo "$sample_conf" > ${CONFIG}
+    echo "UUID=\$(${UUID_CMD})" >> ${CONFIG}
+    echo "Generating templates"
+    echo "$header_template" > ${TEMPLATES}/header.txt
+    echo "$item_template" > ${TEMPLATES}/item.txt
+    echo "Initializing database"
+    sqlite3 $DATABASE "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT, title TEXT, content TEXT, date TEXT);"
+    echo "Trying to install voorhees somewhere in your PATH"
+    install_voorhees
+    echo "Firing up config file in editor..."
+    sleep 3
+    ${EDITOR:-nano} $CONFIG
+else
+    echo "voorhees is already installed - ${SRC}"
+fi

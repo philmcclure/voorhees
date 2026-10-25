@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+
+PROGNAME="$(basename $0)"
+src_dir="${HOME}/.config/${PROGNAME}"
+DATABASE="${src_dir}/posts.db"
+TEMPLATES="${src_dir}/templates"
+PUBLICATION_DATE=$(date +"%Y-%m-%dT%H:%M:%S%:z")
+VERSION="0.1"
+. "${src_dir}/config"
+. "${TEMPLATES}/header.txt"
+. "${TEMPLATES}/item.txt"
+
+generate_items(){
+max_items=$(sqlite3 ${DATABASE} "SELECT COUNT(*) FROM posts;")
+if [ "$POST_COUNT" -eq 0 ]; then
+    count="1"
+elif [ "$max_items" -lt "$POST_COUNT" ]; then
+    count="1"
+else
+    count="$(( ${max_items}-${POST_COUNT}+1 ))"
+fi
+
+x=$max_items;
+while [ $x -ge "$count" ]; do
+IFS='|' read -r -a emp_data <<< "$(sqlite3 ${DATABASE} ".mode list" "SELECT uuid, title, content, date FROM posts WHERE rowid=${x};")"
+    ITEM_UUID="${emp_data[0]}"
+    ITEM_TITLE="${emp_data[1]}"
+    CONTENT="${emp_data[2]}"
+    CONTENT_HTML=$(echo "$CONTENT" | sed 's/XXXXX/\n\n/g' | $MARKDOWN | tr '\n' ' ')
+    DATE_PUBLISHED="${emp_data[3]}"
+    . "${TEMPLATES}/item.txt"
+    echo "$ITEM"
+
+    x=$(( x-1 ));
+done
+}
+
+generate_feed(){
+if [ -z "$FEED_OUT" ]; then
+    echo "$HEADER"
+    generate_items
+    echo "    ]"
+    echo "}"
+else
+    echo "$HEADER" > "$FEED_OUT"
+    generate_items >> "$FEED_OUT"
+    echo "    ]" >> "$FEED_OUT"
+    echo "}" >> "$FEED_OUT"
+fi
+}
+
+new_item(){
+    ITEM_UUID=${ITEM_UUID}
+
+    if [ -e "$FILE" ]; then
+        scratch="$FILE"
+    else
+	scratch=$(mktemp -t tmp.XXXXXX)
+	$EDITOR $scratch
+    fi
+
+    ITEM_TITLE=$( head -n1 ${scratch} | sed "s|'|''|g" )
+    CONTENT_HTML=$(sed '1d' ${scratch} | sed '/^$/d' | sed 's/$/XXXXX/g' | sed '2,$s/^/=/' | sed -e :a -e '$!N;s/\n=//;ta' -e 'P;D' | sed "s|'|''|g")
+    sqlite3 $DATABASE "INSERT INTO posts (uuid, title, content, date) VALUES ('$ITEM_UUID', '$ITEM_TITLE', '$CONTENT_HTML', '$PUBLICATION_DATE');"
+}
+
+edit_post(){
+if [[ "$POST" =~ ^\{?[A-F0-9a-f]{8}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{4}-[A-F0-9a-f]{12}\}?$ ]]; then
+ITEM_TITLE=$(sqlite3 $DATABASE "SELECT title FROM posts WHERE uuid = '${POST}'";)
+CONTENT_HTML=$(sqlite3 $DATABASE "SELECT content FROM posts WHERE uuid = '${POST}'";)
+ITEM_UUID="$POST"
+else
+IFS='|' read -r -a emp_data <<< $(sqlite3 $DATABASE "SELECT uuid, title, content FROM posts ORDER BY rowid DESC LIMIT 1";)
+    ITEM_UUID="${emp_data[0]}"
+    ITEM_TITLE="${emp_data[1]}"
+    CONTENT_HTML="${emp_data[2]}"
+fi
+scratch=$(mktemp -t tmp.XXXXXX)
+echo "$ITEM_TITLE" > $scratch
+echo >> $scratch
+echo "$CONTENT_HTML" | sed 's/XXXXX/\n\n/g' >> $scratch
+$EDITOR $scratch
+ITEM_TITLE=$( head -n1 ${scratch} | sed "s|'|''|g" )
+CONTENT_HTML=$(sed '1d' ${scratch} | sed '/^$/d' | sed 's/$/XXXXX/g' | sed '2,$s/^/=/' | sed -e :a -e '$!N;s/\n=//;ta' -e 'P;D' | sed "s|'|''|g" )
+sqlite3 $DATABASE "UPDATE posts SET title = '$ITEM_TITLE' WHERE uuid = '$ITEM_UUID';"
+sqlite3 $DATABASE "UPDATE posts SET content = '$CONTENT_HTML' WHERE uuid = '$ITEM_UUID';"
+rm $scratch
+}
+
+help_menu(){
+    echo
+    echo "${PROGNAME} ${VERSION}"
+    length=$(echo "${PROGNAME} ${VERSION}" | wc -c)
+    printf '%*s' "$length" | tr ' ' '=';echo
+    echo "The first line of your post is the title. The rest is the content."
+    echo "Usage:"
+    echo "${PROGNAME} -t (opens a text editor to write your post)"
+    echo "${PROGNAME} -f post_content.txt"
+    echo "${PROGNAME} -e <UUID-of-post-to-edit>"
+    echo "${PROGNAME} (no arguments generates feed)"
+    echo
+}
+
+while getopts ":f:e:t" opt; do
+    case "${opt}" in
+        t)
+	  new_item
+	  exit
+	  ;;
+	f)
+	  FILE="${OPTARG}"
+	  new_item "$FILE"
+	  exit
+	  ;;
+	e)
+	  POST="${OPTARG}"
+	  edit_post
+	  exit
+	  ;;
+	*)
+	  help_menu
+	  exit
+	  ;;
+       esac
+done
+if [ "$OPTIND" -eq 1 ]; then
+    generate_feed
+fi
